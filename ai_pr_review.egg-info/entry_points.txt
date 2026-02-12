@@ -1,0 +1,2 @@
+[console_scripts]
+ai-pr-review = ai_pr_review:main

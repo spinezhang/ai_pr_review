@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: ai-pr-review
+Version: 0.1.0
+Summary: AI-powered Azure DevOps PR assistant
+Requires-Dist: anthropic>=0.39.0
+Dynamic: requires-dist
+Dynamic: summary

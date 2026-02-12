@@ -18,6 +18,22 @@ AI-powered Azure DevOps pull request helper with two commands:
 - Azure DevOps repo/project/org access for posting/creating PRs
 - At least one AI API key
 
+## Installation
+
+### macOS/Linux
+
+```bash
+./scripts/install.sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+.\scripts\install.ps1
+```
+
+Both scripts install into your current/default Python environment and register the `ai-pr-review` command.
+
 ## Environment Variables
 
 ### AI settings
@@ -59,7 +75,7 @@ Pipeline fallbacks are also supported in review mode:
 ### Create a new PR with AI description
 
 ```bash
-python ai_pr_review.py create <source_branch> <target_branch> [--title "..."] [--push]
+ai-pr-review create <source_branch> <target_branch> [--title "..."] [--push]
 ```
 
 Example:
@@ -72,7 +88,7 @@ export AZDO_PROJECT="MyProject"
 export AZDO_REPO_ID="<repo-id>"
 export AZDO_TOKEN="<token>"
 
-python ai_pr_review.py create feature/new-api main --title "Add new API"
+ai-pr-review create feature/new-api main --title "Add new API"
 ```
 
 Notes:
@@ -83,7 +99,7 @@ Notes:
 ### Review code and post PR comment
 
 ```bash
-python ai_pr_review.py review <source_branch> <target_branch> [--pr-id <id>] [--update-description]
+ai-pr-review review <source_branch> <target_branch> [--pr-id <id>] [--update-description]
 ```
 
 Example:
@@ -92,7 +108,7 @@ Example:
 export ANTHROPIC_API_KEY=sk-ant-xxxx
 export AI_MODEL=claude-opus-4-6
 
-python ai_pr_review.py review feature/new-api main --pr-id 123 --update-description
+ai-pr-review review feature/new-api main --pr-id 123 --update-description
 ```
 
 Notes:
@@ -110,7 +126,7 @@ python ai_pr_review.py <source_branch> <target_branch>
 This is treated as:
 
 ```bash
-python ai_pr_review.py review <source_branch> <target_branch>
+ai-pr-review review <source_branch> <target_branch>
 ```
 
 In legacy mode, description updates are controlled by `AI_UPDATE_PR_DESCRIPTION=true`.
