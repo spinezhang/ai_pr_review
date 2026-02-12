@@ -11,10 +11,13 @@ This is treated as:
     python ai_pr_review.py review <source_branch> <target_branch>
 """
 import argparse
+import configparser
 import json
 import os
+import re
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 import urllib.error
 try:
@@ -36,6 +39,18 @@ def get_env(*names, default=""):
         if val:
             return val
     return default
+
+
+def safe_print(text=""):
+    value = str(text)
+    try:
+        print(value)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout.buffer.write((value + "\n").encode(encoding, errors="replace"))
+        else:
+            print(value.encode(encoding, errors="replace").decode(encoding))
 
 
 def collect_diff(source_branch, target_branch):
@@ -62,9 +77,30 @@ def collect_diff(source_branch, target_branch):
 
 
 def to_ref(branch):
-    if branch.startswith("refs/heads/"):
-        return branch
-    return f"refs/heads/{branch}"
+    normalized = normalize_branch_for_ref(branch)
+    if normalized.startswith("refs/heads/"):
+        return normalized
+    return f"refs/heads/{normalized}"
+
+
+def normalize_branch_for_ref(branch):
+    value = (branch or "").strip()
+    if value.startswith("refs/heads/"):
+        return value
+
+    # Accept remote-tracking forms like origin/foo or refs/remotes/origin/foo.
+    if value.startswith("refs/remotes/"):
+        parts = value.split("/", 3)
+        if len(parts) == 4:
+            return parts[3]
+    if value.startswith("remotes/"):
+        parts = value.split("/", 2)
+        if len(parts) == 3:
+            return parts[2]
+    if value.startswith("origin/"):
+        return value.split("/", 1)[1]
+
+    return value
 
 
 def http_json(url, method, data=None, headers=None):
@@ -75,8 +111,18 @@ def http_json(url, method, data=None, headers=None):
     if data is not None:
         body = json.dumps(data).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=hdrs, method=method)
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8")
+        except Exception:
+            detail = ""
+        if detail:
+            print(f"[ai_pr_review] HTTP {exc.code} response: {detail}")
+        raise
 
 
 def get_review_prompt():
@@ -210,7 +256,6 @@ def post_pr_comment(org_url, project, repo_id, pr_id, token, content):
         headers={"Authorization": f"Bearer {token}"},
     )
 
-
 def update_pr_description(org_url, project, repo_id, pr_id, token, description):
     url = (
         f"{org_url}{project}/_apis/git/repositories/{repo_id}/pullRequests/"
@@ -226,9 +271,10 @@ def update_pr_description(org_url, project, repo_id, pr_id, token, description):
 
 def create_pr(org_url, project, repo_id, source_branch, target_branch, token, title, description):
     url = (
-        f"{org_url}{project}/_apis/git/repositories/{repo_id}/pullrequests"
+        f"{org_url}/{project}/_apis/git/repositories/{repo_id}/pullrequests"
         f"?api-version=7.1-preview.1"
     )
+    print(f"url: {url}")
     data = {
         "sourceRefName": to_ref(source_branch),
         "targetRefName": to_ref(target_branch),
@@ -264,17 +310,32 @@ def parse_args():
     create_cmd.add_argument("target_branch")
     create_cmd.add_argument("--title", default="", help="PR title (default: auto-generated)")
     create_cmd.add_argument("--push", action="store_true", help="Push source branch to origin before creating PR")
+    create_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate AI output and print API payloads without posting to Azure DevOps",
+    )
 
     review_cmd = subparsers.add_parser("review", help="Review code and post AI comment to an existing PR")
     review_cmd.add_argument("source_branch")
     review_cmd.add_argument("target_branch")
     review_cmd.add_argument("--pr-id", default="", help="PR ID (default: SYSTEM_PULLREQUEST_PULLREQUESTID)")
     review_cmd.add_argument("--update-description", action="store_true", help="Also update PR description from AI")
+    review_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate AI output and print API payloads without posting to Azure DevOps",
+    )
 
     parser.add_argument(
         "--model",
         default=os.getenv("AI_MODEL", "claude-opus-4-6"),
         help="AI model name",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate AI output and print API payloads without posting to Azure DevOps",
     )
     parser.add_argument("--org-url", default=get_env("AZDO_ORG_URL", "SYSTEM_COLLECTIONURI"))
     parser.add_argument("--project", default=get_env("AZDO_PROJECT", "SYSTEM_TEAMPROJECT"))
@@ -293,6 +354,7 @@ def parse_args():
             pr_id=get_env("SYSTEM_PULLREQUEST_PULLREQUESTID"),
             update_description=os.getenv("AI_UPDATE_PR_DESCRIPTION", "false").lower() in ("1", "true", "yes"),
             model=os.getenv("AI_MODEL", "claude-opus-4-6"),
+            dry_run=os.getenv("AI_DRY_RUN", "false").lower() in ("1", "true", "yes"),
             org_url=get_env("AZDO_ORG_URL", "SYSTEM_COLLECTIONURI"),
             project=get_env("AZDO_PROJECT", "SYSTEM_TEAMPROJECT"),
             repo_id=get_env("AZDO_REPO_ID", "BUILD_REPOSITORY_ID"),
@@ -315,13 +377,63 @@ def require_ado_context(args):
     return True
 
 
+def get_origin_url_from_git():
+    try:
+        return run(["git", "config", "--get", "remote.origin.url"])
+    except Exception:
+        return ""
+
+
+def get_origin_url_from_config():
+    config_path = os.path.join(".git", "config")
+    if not os.path.exists(config_path):
+        return ""
+    try:
+        parser = configparser.ConfigParser()
+        parser.read(config_path, encoding="utf-8")
+        return parser.get('remote "origin"', "url", fallback="")
+    except Exception:
+        return ""
+
+
+def extract_repo_id_from_remote(remote_url):
+    if not remote_url:
+        return ""
+
+    normalized = remote_url.strip()
+    if "/_git/" in normalized:
+        repo = normalized.rsplit("/_git/", 1)[-1].strip("/")
+        return urllib.parse.unquote(repo)
+
+    m = re.search(r"ssh\.dev\.azure\.com[:/]+v3/[^/]+/[^/]+/([^/]+)$", normalized)
+    if m:
+        return urllib.parse.unquote(m.group(1).removesuffix(".git"))
+
+    path = normalized.replace("\\", "/").rstrip("/")
+    repo = path.rsplit("/", 1)[-1]
+    if ":" in repo and "@" in path and "/" not in repo:
+        repo = repo.rsplit(":", 1)[-1]
+    return urllib.parse.unquote(repo.removesuffix(".git"))
+
+
+def infer_repo_id_from_git():
+    remote_url = get_origin_url_from_git() or get_origin_url_from_config()
+    return extract_repo_id_from_remote(remote_url)
+
+
 def default_title(source_branch, target_branch):
-    src = source_branch.replace("refs/heads/", "")
-    tgt = target_branch.replace("refs/heads/", "")
+    src = normalize_branch_for_ref(source_branch).replace("refs/heads/", "")
+    tgt = normalize_branch_for_ref(target_branch).replace("refs/heads/", "")
     return f"{src} into {tgt}"
 
 
 def handle_create(args):
+    if not args.repo_id:
+        inferred_repo_id = infer_repo_id_from_git()
+        if inferred_repo_id:
+            args.repo_id = inferred_repo_id
+            print(f"[ai_pr_review] Inferred repo-id from git origin: {args.repo_id}")
+
     if args.push:
         print(f"[ai_pr_review] Pushing {args.source_branch} to origin...")
         run(["git", "push", "-u", "origin", args.source_branch])
@@ -336,9 +448,28 @@ def handle_create(args):
             description = "Summary\n- AI description generation failed."
 
     title = args.title.strip() or default_title(args.source_branch, args.target_branch)
+    if args.dry_run:
+        url = (
+            f"{args.org_url}/{args.project}/_apis/git/repositories/{args.repo_id}/pullrequests"
+            f"?api-version=7.1-preview.1"
+        )
+        payload = {
+            "sourceRefName": to_ref(args.source_branch),
+            "targetRefName": to_ref(args.target_branch),
+            "title": title,
+            "description": description,
+        }
+        print("[ai_pr_review] Dry run enabled; skipping PR creation.")
+        print(f"[ai_pr_review] Create PR URL: {url}")
+        print("[ai_pr_review] Create PR payload:")
+        print(json.dumps(payload, indent=2))
+        print("[ai_pr_review] Generated PR description:\n")
+        safe_print(description)
+        return 0
+
     if not require_ado_context(args):
         print("[ai_pr_review] Generated PR description:\n")
-        print(description)
+        safe_print(description)
         return 1
 
     pr = create_pr(
@@ -369,9 +500,38 @@ def handle_review(args):
     if not result:
         return 1
 
-    print(result)
+    print("[ai_pr_review] Generated review content:\n")
+    safe_print(result)
 
     pr_id = args.pr_id or get_env("SYSTEM_PULLREQUEST_PULLREQUESTID")
+    if args.dry_run:
+        print("[ai_pr_review] Dry run enabled; skipping PR comment/update calls.")
+        if pr_id:
+            comment_url = (
+                f"{args.org_url}{args.project}/_apis/git/repositories/{args.repo_id}/pullRequests/"
+                f"{pr_id}/threads?api-version=7.1-preview.1"
+            )
+            comment_payload = {
+                "comments": [
+                    {"parentCommentId": 0, "content": "## AI Code Review\n\n" + result, "commentType": 1}
+                ],
+                "status": 1,
+            }
+            print(f"[ai_pr_review] Review comment URL: {comment_url}")
+            print("[ai_pr_review] Review comment payload:")
+            print(json.dumps(comment_payload, indent=2))
+            if args.update_description:
+                update_url = (
+                    f"{args.org_url}{args.project}/_apis/git/repositories/{args.repo_id}/pullRequests/"
+                    f"{pr_id}?api-version=7.1-preview.1"
+                )
+                print(f"[ai_pr_review] Description update URL: {update_url}")
+                print("[ai_pr_review] Description update payload:")
+                print(json.dumps({"description": "[existing description]\\n\\n---\\nAI Suggested Description\\n\\n[generated]"}, indent=2))
+        else:
+            print("[ai_pr_review] No PR ID available; only review content was generated.")
+        return 0
+
     if not (pr_id and require_ado_context(args)):
         print("[ai_pr_review] Missing Azure DevOps context or token; printing output only.")
         return 0

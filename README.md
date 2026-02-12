@@ -77,6 +77,7 @@ python ai_pr_review.py create feature/new-api main --title "Add new API"
 
 Notes:
 - `--push` runs `git push -u origin <source_branch>` before PR creation.
+- If `--repo-id`/`AZDO_REPO_ID` is missing, `create` attempts to infer it from `git remote origin` (via `git config` or `.git/config`).
 - If Azure DevOps context is missing, the script prints generated description and exits.
 
 ### Review code and post PR comment
