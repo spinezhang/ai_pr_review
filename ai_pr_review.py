@@ -142,7 +142,7 @@ def get_pr_description_prompt():
         "- Summary\n"
         "- Changes\n"
         "- Tests\n"
-        "Be specific, actionable, and avoid filler."
+        "Be specific, actionable, and avoid filler and no longer than 3500 characters."
     )
 
 
