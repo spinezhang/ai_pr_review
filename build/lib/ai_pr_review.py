@@ -337,10 +337,10 @@ def parse_args():
         action="store_true",
         help="Generate AI output and print API payloads without posting to Azure DevOps",
     )
-    parser.add_argument("--org-url", default=get_env("AZDO_ORG_URL", "SYSTEM_COLLECTIONURI"))
-    parser.add_argument("--project", default=get_env("AZDO_PROJECT", "SYSTEM_TEAMPROJECT"))
+    parser.add_argument("--org-url", default=get_env("AZURE_DEVOPS_ORG_URL", "SYSTEM_COLLECTIONURI"))
+    parser.add_argument("--project", default=get_env("AZURE_DEVOPS_PROJECT", "SYSTEM_TEAMPROJECT"))
     parser.add_argument("--repo-id", default=get_env("AZDO_REPO_ID", "BUILD_REPOSITORY_ID"))
-    parser.add_argument("--token", default=get_env("AZDO_TOKEN", "SYSTEM_ACCESSTOKEN", "SYSTEM_ACCESS_TOKEN"))
+    parser.add_argument("--token", default=get_env("AZURE_DEVOPS_PAT", "SYSTEM_ACCESSTOKEN", "SYSTEM_ACCESS_TOKEN"))
 
     args = parser.parse_args()
     if args.command:
@@ -355,10 +355,10 @@ def parse_args():
             update_description=os.getenv("AI_UPDATE_PR_DESCRIPTION", "false").lower() in ("1", "true", "yes"),
             model=os.getenv("AI_MODEL", "claude-opus-4-6"),
             dry_run=os.getenv("AI_DRY_RUN", "false").lower() in ("1", "true", "yes"),
-            org_url=get_env("AZDO_ORG_URL", "SYSTEM_COLLECTIONURI"),
-            project=get_env("AZDO_PROJECT", "SYSTEM_TEAMPROJECT"),
+            org_url=get_env("AZURE_DEVOPS_ORG_URL", "SYSTEM_COLLECTIONURI"),
+            project=get_env("AZURE_DEVOPS_PROJECT", "SYSTEM_TEAMPROJECT"),
             repo_id=get_env("AZDO_REPO_ID", "BUILD_REPOSITORY_ID"),
-            token=get_env("AZDO_TOKEN", "SYSTEM_ACCESSTOKEN", "SYSTEM_ACCESS_TOKEN"),
+            token=get_env("AZURE_DEVOPS_PAT", "SYSTEM_ACCESSTOKEN", "SYSTEM_ACCESS_TOKEN"),
         )
         return legacy
 
@@ -371,7 +371,7 @@ def require_ado_context(args):
         print(
             "[ai_pr_review] Missing Azure DevOps context. "
             "Set --org-url, --project, --repo-id, --token "
-            "or AZDO_ORG_URL, AZDO_PROJECT, AZDO_REPO_ID, AZDO_TOKEN."
+            "or AZURE_DEVOPS_ORG_URL, AZURE_DEVOPS_PROJECT, AZDO_REPO_ID, AZURE_DEVOPS_PAT."
         )
         return False
     return True
